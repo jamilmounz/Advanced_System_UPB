@@ -30,7 +30,34 @@ class NetworkTopo(Topo):
 
         Topo.__init__(self)
 
-        # Build the specified network topology here
+                # ---------- 1. OpenFlow datapaths (2 access switches + 1 “router”) ----------
+        s1 = self.addSwitch('s1')     # internal‑hosts switch
+        s2 = self.addSwitch('s2')     # internal‑server switch
+        s3 = self.addSwitch('s3')     # plays the role of a router
+
+        # ---------- 2. Hosts with IP config and default gateway ----------
+        h1  = self.addHost('h1',ip='10.0.1.2/24',defaultRoute='via 10.0.1.1')
+        h2  = self.addHost('h2',ip='10.0.1.3/24',defaultRoute='via 10.0.1.1')
+        ser = self.addHost('ser',ip='10.0.2.2/24',defaultRoute='via 10.0.2.1')
+        ext = self.addHost('ext',ip='192.168.1.123/24',defaultRoute='via 192.168.1.1')
+
+        # ---------- 3. Common link parameters ----------
+        linkopts = dict(cls=TCLink, bw=15, delay='10ms')
+
+        # ---------- 4. Wire up the topology exactly as in the figure ----------
+        # Subnet 10.0.1.0/24
+        self.addLink(h1, s1, **linkopts)
+        self.addLink(h2, s1, **linkopts)
+
+        # Subnet 10.0.2.0/24
+        self.addLink(ser, s2, **linkopts)
+
+        # “Internet” side
+        self.addLink(ext, s3, **linkopts)
+
+        # Switch–router interconnects
+        self.addLink(s1, s3, **linkopts)   # s1 ↔ s3
+        self.addLink(s2, s3, **linkopts)   # s2 ↔ s3
 
 def run():
     topo = NetworkTopo()
