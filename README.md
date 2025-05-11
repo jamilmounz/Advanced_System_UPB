@@ -6,3 +6,7 @@ This repository contains code skeleton for the labs of Advanced Networked System
 exit
 
 sudo mn -c
+
+ryu-manager ans_controller.py
+
+sudo python3 run_network.py
