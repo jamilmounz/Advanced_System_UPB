@@ -1,19 +1,27 @@
 """
- Copyright 2024 Computer Networks Group @ UPB
+ans_controller.py
 
- Licensed under the Apache License, Version 2.0 (the "License");
- you may not use this file except in compliance with the License.
- You may obtain a copy of the License at
+SDN Controller for Lab 1 (Advanced Networked Systems SS25).
+Implements switch learning logic for s1 and s2, and routing logic for s3.
+Handles ARP requests, IP forwarding, flow rule management, and basic firewall policies.
+"""
 
-      https://www.apache.org/licenses/LICENSE-2.0
+"""
+Copyright 2024 Computer Networks Group @ UPB
 
- Unless required by applicable law or agreed to in writing, software
- distributed under the License is distributed on an "AS IS" BASIS,
- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- See the License for the specific language governing permissions and
- limitations under the License.
- """
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+#!/usr/bin/env python3
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
@@ -36,27 +44,36 @@ SUBNETS = {1: ip_network('10.0.1.0/24'),
            2: ip_network('10.0.2.0/24'),
            3: ip_network('192.168.1.0/24')}
 
-ROUTER_DPID = 3          # The datapath‑id of s3
-EXT_PORT    = 3          # On s3: port 3 connects to 'ext'
-SER_PORT    = 2          # On s3: port 2 connects to 'ser'
+ROUTER_DPID = 3          # The datapath‑id of router - s3
+EXT_PORT    = 3          # On s3: port 3 connects to external host 'ext'
+SER_PORT    = 2          # On s3: port 2 connects to internal server 'ser'
 
 class LearningSwitch(app_manager.RyuApp):
+    """
+    Ryu controller that implements both learning switch and router behavior.
+    """
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
+        """
+        Initializes controller data structures for MAC learning, ARP handling and buffering.
+        """
         super(LearningSwitch, self).__init__(*args, **kwargs)
 
         # Here you can initialize the data structures you want to keep at the controller
         # { datapath_id : { mac : port } }
-        self.mac_to_port = {}
+        self.mac_to_port = {}    # dpid → { mac → port }
         self.arp_table   = {}    # ip → mac (learned from ARP replies)
         self.port_for_ip = {}    # ip → out_port (learned dynamically)
-        self.arp_pending = {}      # dst_ip(str) → list[(orig_msg, in_port)]
-        self.ARP_TIMEOUT = 2       # seconds to keep a packet in the buffer
+        self.arp_pending = {}    # dst_ip(str) → list[(orig_msg, in_port)]
+        self.ARP_TIMEOUT = 2     # seconds to keep a packet in the buffer
         
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
+        """
+        Called when a switch connects. Installs a default table-miss rule.
+        """
         
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
@@ -70,19 +87,26 @@ class LearningSwitch(app_manager.RyuApp):
 
     # Add a flow entry to the flow-table
     def add_flow(self, datapath, priority, match, actions):
+        """
+        Helper method to install flow rules on switches/routers.
+        """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         # Construct flow_mod message and send it
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
-                                match=match, instructions=inst)
+        mod = parser.OFPFlowMod(datapath=datapath, 
+                                priority=priority,
+                                match=match, 
+                                instructions=inst)
         datapath.send_msg(mod)
 
     # Handle the packet_in event
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-
+        """
+        Handles packets sent to the controller. Implements logic for both switch and router datapaths.
+        """
         msg       = ev.msg
         datapath  = msg.datapath
         dpid      = datapath.id
@@ -125,6 +149,8 @@ class LearningSwitch(app_manager.RyuApp):
                                   data=data)
             datapath.send_msg(out)
             return
+        
+        # --- Router Logic ----------------------------------------------------- #
         if eth.ethertype == ether_types.ETH_TYPE_ARP:
             arp_pkt = pkt.get_protocol(arp.arp)
 
@@ -133,14 +159,14 @@ class LearningSwitch(app_manager.RyuApp):
             self.arp_table[str(arp_pkt.src_ip)] = arp_pkt.src_mac
             self.port_for_ip[str(arp_pkt.src_ip)] = in_port
             
-            # --- Unleash any packets waiting for this MAC ------------------------------
+            # --- Send any packets waiting for this MAC ------------------------------
             pending = self.arp_pending.pop(str(arp_pkt.src_ip), [])
             for orig_msg, orig_in_port in pending:
                 self._forward_ipv4(datapath, orig_msg, orig_in_port,
                                dst_port = self.port_for_ip[str(arp_pkt.src_ip)],
                                dst_mac  = arp_pkt.src_mac)
 
-            # b) Answer ARP‑Requests for the router’s own IPs
+            # b) Responds ARP‑Requests for the router’s own IPs
             if (arp_pkt.opcode == arp.ARP_REQUEST and
                     arp_pkt.dst_ip in PORT_TO_IP.values()):
                 out_mac = PORT_TO_MAC[in_port]        # MAC of the incoming subnet
@@ -172,7 +198,7 @@ class LearningSwitch(app_manager.RyuApp):
             dst_ip = ip_address(ip_pkt.dst)
             src_ip = ip_address(ip_pkt.src)
 
-            # Which subnet is the destination in?
+            # Identify the destination subnet
             dst_port = None
             for port, subnet in SUBNETS.items():
                 if dst_ip in subnet:
@@ -229,10 +255,11 @@ class LearningSwitch(app_manager.RyuApp):
                                         actions=actions,
                                         data=msg.data))
             return
-        # ----------------------------------------------------------------------
-    # Helper: craft an ARP request wrapped in an OFPPacketOut
-    # ----------------------------------------------------------------------
+
     def _build_arp_request(self, datapath, out_port, dst_ip):
+        """
+        Helper: craft an ARP request wrapped in an OFPPacketOut.
+        """
         parser  = datapath.ofproto_parser
         ofproto = datapath.ofproto
 
@@ -255,10 +282,10 @@ class LearningSwitch(app_manager.RyuApp):
                                    actions    = [parser.OFPActionOutput(out_port)],
                                    data       = pkt.data)
 
-    # ----------------------------------------------------------------------
-    # Helper: decrement TTL, install a flow, and forward the original pkt
-    # ----------------------------------------------------------------------
     def _forward_ipv4(self, datapath, msg, in_port, dst_port, dst_mac):
+        """
+        Helper: decrement TTL, install a flow, and forward the original packet.
+        """
         parser  = datapath.ofproto_parser
         ofproto = datapath.ofproto
 

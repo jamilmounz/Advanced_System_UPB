@@ -30,7 +30,7 @@ class NetworkTopo(Topo):
 
         Topo.__init__(self)
 
-                # ---------- 1. OpenFlow datapaths (2 access switches + 1 “router”) ----------
+        # ---------- 1. OpenFlow datapaths (2 access switches + 1 “router”) ----------
         s1 = self.addSwitch('s1')     # internal‑hosts switch
         s2 = self.addSwitch('s2')     # internal‑server switch
         s3 = self.addSwitch('s3')     # plays the role of a router
@@ -46,22 +46,32 @@ class NetworkTopo(Topo):
 
         # ---------- 4. Wire up the topology exactly as in the figure ----------
         # Subnet 10.0.1.0/24
-        self.addLink(h1, s1, **linkopts)
-        self.addLink(h2, s1, **linkopts)
+        self.addLink(h1, s1, **linkopts) # h1 ↔ s1
+        self.addLink(h2, s1, **linkopts) # h2 ↔ s1
 
         # Subnet 10.0.2.0/24
-        self.addLink(ser, s2, **linkopts)
+        self.addLink(ser, s2, **linkopts) # ser ↔ s2
 
         # Switch-router interconnects
         self.addLink(s1, s3, **linkopts)   # s1 ↔ s3
         self.addLink(s2, s3, **linkopts)   # s2 ↔ s3
 
         # “Internet” side
-        self.addLink(ext, s3, **linkopts)
+        self.addLink(ext, s3, **linkopts) # ext ↔ s3
 
-
-
+# Main function that creates and runs a Mininet network with a custom topology and remote controller
 def run():
+    # Main function that creates and runs a Mininet network with a custom topology and remote controller
+    """
+    Creates and runs a Mininet network simulation.
+
+    The network is configured with:
+    - Custom network topology (NetworkTopo)
+    - OVS kernel switches
+    - TC (Traffic Control) enabled links
+    - Remote controller at 127.0.0.1:6653
+
+    """
     topo = NetworkTopo()
     net = Mininet(topo=topo,
                   switch=OVSKernelSwitch,
