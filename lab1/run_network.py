@@ -52,12 +52,14 @@ class NetworkTopo(Topo):
         # Subnet 10.0.2.0/24
         self.addLink(ser, s2, **linkopts)
 
+        # Switch-router interconnects
+        self.addLink(s1, s3, **linkopts)   # s1 ↔ s3
+        self.addLink(s2, s3, **linkopts)   # s2 ↔ s3
+
         # “Internet” side
         self.addLink(ext, s3, **linkopts)
 
-        # Switch–router interconnects
-        self.addLink(s1, s3, **linkopts)   # s1 ↔ s3
-        self.addLink(s2, s3, **linkopts)   # s2 ↔ s3
+
 
 def run():
     topo = NetworkTopo()
