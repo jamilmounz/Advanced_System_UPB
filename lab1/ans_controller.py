@@ -136,7 +136,7 @@ class LearningSwitch(app_manager.RyuApp):
             # --- Unleash any packets waiting for this MAC ------------------------------
             pending = self.arp_pending.pop(str(arp_pkt.src_ip), [])
             for orig_msg, orig_in_port in pending:
-                self._forward_ipv4(orig_msg, orig_in_port,
+                self._forward_ipv4(datapath, orig_msg, orig_in_port,
                                dst_port = self.port_for_ip[str(arp_pkt.src_ip)],
                                dst_mac  = arp_pkt.src_mac)
 
@@ -196,7 +196,7 @@ class LearningSwitch(app_manager.RyuApp):
             if key not in self.arp_table:
                 # --- No MAC yet – queue the packet and ARP --------------------------------
                 self.arp_pending.setdefault(key, []).append((msg, in_port))
-                arp_req = self._build_arp_request(dst_port, dst_ip)
+                arp_req = self._build_arp_request(datapath, dst_port, dst_ip)
                 datapath.send_msg(arp_req)
                 return
 
@@ -229,3 +229,55 @@ class LearningSwitch(app_manager.RyuApp):
                                         actions=actions,
                                         data=msg.data))
             return
+        # ----------------------------------------------------------------------
+    # Helper: craft an ARP request wrapped in an OFPPacketOut
+    # ----------------------------------------------------------------------
+    def _build_arp_request(self, datapath, out_port, dst_ip):
+        parser  = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+
+        pkt = packet.Packet()
+        pkt.add_protocol(ethernet.ethernet(
+            ethertype = ether_types.ETH_TYPE_ARP,
+            src       = PORT_TO_MAC[out_port],
+            dst       = 'ff:ff:ff:ff:ff:ff'))
+        pkt.add_protocol(arp.arp(
+            opcode   = arp.ARP_REQUEST,
+            src_mac  = PORT_TO_MAC[out_port],
+            src_ip   = PORT_TO_IP[out_port],
+            dst_mac  = '00:00:00:00:00:00',
+            dst_ip   = str(dst_ip)))
+        pkt.serialize()
+
+        return parser.OFPPacketOut(datapath   = datapath,
+                                   buffer_id  = ofproto.OFP_NO_BUFFER,
+                                   in_port    = ofproto.OFPP_CONTROLLER,
+                                   actions    = [parser.OFPActionOutput(out_port)],
+                                   data       = pkt.data)
+
+    # ----------------------------------------------------------------------
+    # Helper: decrement TTL, install a flow, and forward the original pkt
+    # ----------------------------------------------------------------------
+    def _forward_ipv4(self, datapath, msg, in_port, dst_port, dst_mac):
+        parser  = datapath.ofproto_parser
+        ofproto = datapath.ofproto
+
+        src_mac = PORT_TO_MAC[dst_port]
+
+        actions = [parser.OFPActionDecNwTtl(),
+                   parser.OFPActionSetField(eth_src=src_mac),
+                   parser.OFPActionSetField(eth_dst=dst_mac),
+                   parser.OFPActionOutput(dst_port)]
+
+        ip_pkt = packet.Packet(msg.data).get_protocol(ipv4.ipv4)
+        match  = parser.OFPMatch(eth_type = ether_types.ETH_TYPE_IP,
+                                 ipv4_dst = ip_pkt.dst)
+
+        self.add_flow(datapath, 10, match, actions)
+
+        datapath.send_msg(
+            parser.OFPPacketOut(datapath = datapath,
+                                buffer_id= ofproto.OFP_NO_BUFFER,
+                                in_port  = in_port,
+                                actions  = actions,
+                                data     = msg.data))
