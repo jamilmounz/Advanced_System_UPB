@@ -51,6 +51,8 @@ class LearningSwitch(app_manager.RyuApp):
         self.mac_to_port = {}
         self.arp_table   = {}    # ip → mac (learned from ARP replies)
         self.port_for_ip = {}    # ip → out_port (learned dynamically)
+        self.arp_pending = {}      # dst_ip(str) → list[(orig_msg, in_port)]
+        self.ARP_TIMEOUT = 2       # seconds to keep a packet in the buffer
         
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -130,6 +132,13 @@ class LearningSwitch(app_manager.RyuApp):
             # Learn from every ARP we see (request or reply)
             self.arp_table[str(arp_pkt.src_ip)] = arp_pkt.src_mac
             self.port_for_ip[str(arp_pkt.src_ip)] = in_port
+            
+            # --- Unleash any packets waiting for this MAC ------------------------------
+            pending = self.arp_pending.pop(str(arp_pkt.src_ip), [])
+            for orig_msg, orig_in_port in pending:
+                self._forward_ipv4(orig_msg, orig_in_port,
+                               dst_port = self.port_for_ip[str(arp_pkt.src_ip)],
+                               dst_mac  = arp_pkt.src_mac)
 
             # b) Answer ARP‑Requests for the router’s own IPs
             if (arp_pkt.opcode == arp.ARP_REQUEST and
@@ -172,44 +181,30 @@ class LearningSwitch(app_manager.RyuApp):
             if dst_port is None:
                 return  # we don't route outside the known subnets
 
-            # -- Security policies ------------------------------------------------ #
-            if ((in_port == EXT_PORT and dst_port == SER_PORT) or
-                (in_port == SER_PORT and dst_port == EXT_PORT)):
-                if ip_pkt.proto in (6, 17):      # TCP or UDP
-                    return
-            if in_port == EXT_PORT and dst_port != EXT_PORT:
-                if ip_pkt.proto == 1:            # ICMP echo from ext to internal
-                    return
+            # -------- Security policies -----------------------------------------------
+            # 2.1  Drop any TCP/UDP traffic between ser and ext (both directions)
+            if ({in_port, dst_port} == {SER_PORT, EXT_PORT}) and ip_pkt.proto in (6, 17):
+                return
+
+            # 2.2  Drop *all* ICMP traffic that involves ext (either source or dest)
+            if (in_port == EXT_PORT or dst_port == EXT_PORT) and ip_pkt.proto == 1:
+                return
 
             # -- Normal forwarding ------------------------------------------------ #
             key = str(dst_ip)                     # ← unify key type
             
             if key not in self.arp_table:
-                # No MAC yet – send an ARP‑Request (gratuitous) and buffer packet
-                arp_req = packet.Packet()
-                arp_req.add_protocol(
-                    ethernet.ethernet(ethertype=ether_types.ETH_TYPE_ARP,
-                                      src=PORT_TO_MAC[dst_port],
-                                      dst='ff:ff:ff:ff:ff:ff'))
-                arp_req.add_protocol(
-                    arp.arp(opcode=arp.ARP_REQUEST,
-                            src_mac=PORT_TO_MAC[dst_port],
-                            src_ip=str(PORT_TO_IP[dst_port]),
-                            dst_mac='00:00:00:00:00:00',
-                            dst_ip=str(dst_ip)))
-                arp_req.serialize()
-                datapath.send_msg(
-                    parser.OFPPacketOut(datapath=datapath,
-                                        buffer_id=ofproto.OFP_NO_BUFFER,
-                                        in_port=ofproto.OFPP_CONTROLLER,
-                                        actions=[parser.OFPActionOutput(dst_port)],
-                                        data=arp_req.data))
-                return                      # wait for ARP reply
+                # --- No MAC yet – queue the packet and ARP --------------------------------
+                self.arp_pending.setdefault(key, []).append((msg, in_port))
+                arp_req = self._build_arp_request(dst_port, dst_ip)
+                datapath.send_msg(arp_req)
+                return
 
             dst_mac = self.arp_table[key]
             src_mac = PORT_TO_MAC[dst_port]
 
-            actions = [parser.OFPActionSetField(eth_src=src_mac),
+            actions = [parser.OFPActionDecNwTtl(),               # RFC 1812 §5.2.4
+                       parser.OFPActionSetField(eth_src=src_mac),
                        parser.OFPActionSetField(eth_dst=dst_mac),
                        parser.OFPActionOutput(dst_port)]
 
