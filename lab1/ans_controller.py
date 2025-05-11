@@ -194,6 +194,7 @@ class LearningSwitch(app_manager.RyuApp):
                 arp_req.serialize()
                 datapath.send_msg(
                     parser.OFPPacketOut(datapath=datapath,
+                                        buffer_id=ofproto.OFP_NO_BUFFER,
                                         in_port=ofproto.OFPP_CONTROLLER,
                                         actions=[parser.OFPActionOutput(dst_port)],
                                         data=arp_req.data))
@@ -215,10 +216,9 @@ class LearningSwitch(app_manager.RyuApp):
                 # Use the buffer if available
                 datapath.send_msg(
                     parser.OFPPacketOut(datapath=datapath,
-                                        buffer_id=ofproto.OFP_NO_BUFFER,  
-                                        in_port=ofproto.OFPP_CONTROLLER,
-                                        actions=[parser.OFPActionOutput(dst_port)],
-                                        data=arp_req.data))
+                                        buffer_id=msg.buffer_id,
+                                        in_port=in_port,
+                                        actions=actions))
             else:
                 # No buffer available, include the data
                 datapath.send_msg(
