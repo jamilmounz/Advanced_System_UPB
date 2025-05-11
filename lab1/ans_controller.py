@@ -211,13 +211,19 @@ class LearningSwitch(app_manager.RyuApp):
             self.add_flow(datapath, 10, match, actions)
 
             # send the original packet along the new actions path
-            datapath.send_msg(
-                parser.OFPPacketOut(datapath=datapath,
-                                    buffer_id=ofproto.OFP_NO_BUFFER,
-                                    in_port=in_port,
-                                    actions=actions,
-                                    data=msg.data))
+            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                # Use the buffer if available
+                datapath.send_msg(
+                    parser.OFPPacketOut(datapath=datapath,
+                                        buffer_id=msg.buffer_id,
+                                        in_port=in_port,
+                                        actions=actions))
+            else:
+                # No buffer available, include the data
+                datapath.send_msg(
+                    parser.OFPPacketOut(datapath=datapath,
+                                        buffer_id=ofproto.OFP_NO_BUFFER,
+                                        in_port=in_port,
+                                        actions=actions,
+                                        data=msg.data))
             return
-
-
- 
