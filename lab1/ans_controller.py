@@ -153,8 +153,12 @@ class LearningSwitch(app_manager.RyuApp):
                                           data=arp_reply.data)
                 datapath.send_msg(out)
                 return   # done with this ARP packet
+
         if eth.ethertype == ether_types.ETH_TYPE_IP:
             ip_pkt = pkt.get_protocol(ipv4.ipv4)
+            
+            # Temporary debug line to watch ARP table during ping
+            self.logger.info("IPv4 in=%s dst=%s ARP-tbl=%s", in_port, ip_pkt.dst, self.arp_table)
 
             dst_ip = ip_address(ip_pkt.dst)
             src_ip = ip_address(ip_pkt.src)
