@@ -178,7 +178,9 @@ class LearningSwitch(app_manager.RyuApp):
                     return
 
             # -- Normal forwarding ------------------------------------------------ #
-            if dst_ip not in self.arp_table:
+            key = str(dst_ip)                     # ← unify key type
+            
+            if key not in self.arp_table:
                 # No MAC yet – send an ARP‑Request (gratuitous) and buffer packet
                 arp_req = packet.Packet()
                 arp_req.add_protocol(
@@ -200,7 +202,7 @@ class LearningSwitch(app_manager.RyuApp):
                                         data=arp_req.data))
                 return                      # wait for ARP reply
 
-            dst_mac = self.arp_table[str(dst_ip)]
+            dst_mac = self.arp_table[key]
             src_mac = PORT_TO_MAC[dst_port]
 
             actions = [parser.OFPActionSetField(eth_src=src_mac),
