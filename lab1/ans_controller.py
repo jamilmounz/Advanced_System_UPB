@@ -127,9 +127,9 @@ class LearningSwitch(app_manager.RyuApp):
             arp_pkt = pkt.get_protocol(arp.arp)
 
             # a) We learn hosts' MACs from *any* ARP that is not ours
-            if arp_pkt.opcode == arp.ARP_REPLY:
-                self.arp_table[arp_pkt.src_ip] = arp_pkt.src_mac
-                self.port_for_ip[arp_pkt.src_ip] = in_port
+            # Learn from every ARP we see (request or reply)
+            self.arp_table[str(arp_pkt.src_ip)] = arp_pkt.src_mac
+            self.port_for_ip[str(arp_pkt.src_ip)] = in_port
 
             # b) Answer ARP‑Requests for the router’s own IPs
             if (arp_pkt.opcode == arp.ARP_REQUEST and
